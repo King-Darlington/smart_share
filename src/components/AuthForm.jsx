@@ -2,18 +2,18 @@ import React, { useState } from "react";
 
 export default function AuthForm({ onAuth }) {
   const [mode, setMode] = useState("signup");
-  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!name.trim() || !password.trim()) {
-      setError("Name and password required");
+    if (!email.trim() || !password.trim()) {
+      setError("Email and password required");
       return;
     }
     setError("");
-    onAuth({ name, password, mode });
+    onAuth({ email, password, mode });
   };
 
   return (
@@ -22,12 +22,12 @@ export default function AuthForm({ onAuth }) {
       <form onSubmit={handleSubmit}>
         <div className="mb-2">
           <input
-            type="text"
+            type="email"
             className="form-control"
-            placeholder="Name"
-            value={name}
-            onChange={e => setName(e.target.value)}
-            maxLength={40}
+            placeholder="Email"
+            value={email}
+            onChange={e => setEmail(e.target.value)}
+            maxLength={100}
             required
           />
         </div>

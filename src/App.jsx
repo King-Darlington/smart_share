@@ -147,21 +147,35 @@ export default function App() {
   }, [user]);
   // Auth handler
   const handleAuth = async ({ name, password, mode }) => {
+    setAuthing(true);
+    // accept either { email } or legacy { name }
+    const email = name || (arguments[0] && arguments[0].email);
     let authResult;
-    if (mode === 'signup') {
-      authResult = await supabase.auth.signUp({ email: name, password });
-    } else {
-      authResult = await supabase.auth.signInWithPassword({ email: name, password });
+    try {
+      if (mode === 'signup') {
+        authResult = await supabase.auth.signUp({ email, password });
+      } else {
+        authResult = await supabase.auth.signInWithPassword({ email, password });
+      }
+    } catch (err) {
+      setStatusMessage(err?.message || 'Authentication failed');
+      setAuthing(false);
+      return;
     }
     const { data, error } = authResult;
     if (error) {
-      setStatusMessage(error.message);
+      setStatusMessage(error.message || 'Authentication error');
+      setAuthing(false);
       return;
     }
     // Get user info
-    const { data: userData } = await supabase.auth.getUser();
-    setUser(userData.user);
-    localStorage.setItem("share-room-user", JSON.stringify(userData.user));
+    try {
+      const { data: userData } = await supabase.auth.getUser();
+      setUser(userData.user);
+      localStorage.setItem("share-room-user", JSON.stringify(userData.user));
+    } catch (err) {
+      console.error('Could not retrieve user after auth', err);
+    }
     setAuthing(false);
   };
   // Accept/decline invitation
@@ -323,18 +337,34 @@ export default function App() {
         return;
       }
       setLoadingRoomData(true);
-      const [membersResponse, filesResponse] = await Promise.all([
-        supabase
-          .from("room_members")
-          .select("id, room_id, sharer_name, joined_at, status")
-          .eq("room_id", selectedRoomId)
-          .order("joined_at", { ascending: true }),
-        supabase
+      let membersResponse, filesResponse;
+      try {
+        [membersResponse, filesResponse] = await Promise.all([
+          supabase
+            .from("room_members")
+            .select("id, room_id, sharer_name, joined_at, status")
+            .eq("room_id", selectedRoomId)
+            .order("joined_at", { ascending: true }),
+          supabase
+            .from("room_files")
+            .select("id, room_id, uploader_name, file_name, file_size, storage_path, created_at, file_hash")
+            .eq("room_id", selectedRoomId)
+            .order("created_at", { ascending: false }),
+        ]);
+      } catch (err) {
+        // If selecting status fails (column missing), retry members without status
+        console.warn('Initial loadRoomDetails query failed, retrying without status if possible', err?.message || err);
+        filesResponse = await supabase
           .from("room_files")
           .select("id, room_id, uploader_name, file_name, file_size, storage_path, created_at, file_hash")
           .eq("room_id", selectedRoomId)
-          .order("created_at", { ascending: false }),
-      ]);
+          .order("created_at", { ascending: false });
+        membersResponse = await supabase
+          .from("room_members")
+          .select("id, room_id, sharer_name, joined_at")
+          .eq("room_id", selectedRoomId)
+          .order("joined_at", { ascending: true });
+      }
       setLoadingRoomData(false);
       if (membersResponse.error || filesResponse.error) {
         console.error("loadRoomDetails error", membersResponse.error, filesResponse.error);
