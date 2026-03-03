@@ -146,10 +146,8 @@ export default function App() {
     }
   }, [user]);
   // Auth handler
-  const handleAuth = async ({ name, password, mode }) => {
+  const handleAuth = async ({ name, email, password, mode }) => {
     setAuthing(true);
-    // accept either { email } or legacy { name }
-    const email = name || (arguments[0] && arguments[0].email);
     let authResult;
     try {
       if (mode === 'signup') {
@@ -158,13 +156,17 @@ export default function App() {
         authResult = await supabase.auth.signInWithPassword({ email, password });
       }
     } catch (err) {
-      setStatusMessage(err?.message || 'Authentication failed');
+      const errorMsg = err?.message || 'Authentication failed';
+      console.error('Auth request exception:', err);
+      setStatusMessage(errorMsg);
       setAuthing(false);
       return;
     }
     const { data, error } = authResult;
     if (error) {
-      setStatusMessage(error.message || 'Authentication error');
+      const errorMsg = error.message || error.error_description || JSON.stringify(error);
+      console.error('Auth error response:', error);
+      setStatusMessage(`Auth failed: ${errorMsg}`);
       setAuthing(false);
       return;
     }
@@ -173,6 +175,23 @@ export default function App() {
       const { data: userData } = await supabase.auth.getUser();
       setUser(userData.user);
       localStorage.setItem("share-room-user", JSON.stringify(userData.user));
+
+      // After signup, store user name in users table
+      if (mode === 'signup' && name && userData.user?.id) {
+        try {
+          await supabase.from('users').upsert({
+            id: userData.user.id,
+            email: userData.user.email,
+            name: name,
+            created_at: new Date().toISOString(),
+          });
+          setDisplayName(name);
+        } catch (upsertErr) {
+          console.error('Failed to store user name:', upsertErr);
+        }
+      }
+
+      setStatusMessage(mode === 'signup' ? 'Account created successfully!' : 'Logged in successfully!');
     } catch (err) {
       console.error('Could not retrieve user after auth', err);
     }
@@ -294,10 +313,15 @@ export default function App() {
           .eq("status", "pending")
           .lt("created_at", staleDate.toISOString());
         if (memberError) {
-          console.error("Failed to clean up stale pending requests:", memberError?.message || memberError);
+          // Suppress "column does not exist" errors - expected if schema isn't fully set up
+          if (memberError.message?.includes("does not exist")) {
+            // silently skip
+          } else {
+            console.warn("Cleanup warning for room_members:", memberError?.message || memberError);
+          }
         }
       } catch (err) {
-        console.error("Exception while cleaning up room_members:", err?.message || err);
+        // silently ignore cleanup exceptions
       }
 
       // Clean up stale pending invitations as well
@@ -307,13 +331,16 @@ export default function App() {
           .delete()
           .eq("status", "pending")
           .lt("created_at", staleDate.toISOString());
-        if (invitationError && invitationError.code !== 'PGRST116') {
-          // PGRST116 is "relation does not exist" - table may not exist yet
-          console.error("Failed to clean up stale pending invitations:", invitationError?.message || invitationError);
+        if (invitationError) {
+          // Suppress "relation does not exist" and "column does not exist" errors
+          if (invitationError.code === 'PGRST116' || invitationError.message?.includes("does not exist")) {
+            // silently skip
+          } else {
+            console.warn("Cleanup warning for room_invitations:", invitationError?.message || invitationError);
+          }
         }
       } catch (err) {
-        // If the table doesn't exist or another error occurs, log the message
-        console.error("Exception while cleaning up room_invitations:", err?.message || err);
+        // silently ignore cleanup exceptions
       }
     };
 
