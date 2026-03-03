@@ -900,7 +900,15 @@ export default function App() {
             </div>
 
             {/* RIGHT COLUMN: User Search + Connections + Invitations */}
-            <div className="col-lg-6">
+            <div className="col-lg-6 order-lg-last">
+              {/* User Search (sticky on lg+) */}
+              <div className="card mb-4 position-sticky" style={{ top: '1rem', zIndex: 1 }}>
+                <div className="card-body">
+                  <h5 className="card-title mb-3">🔍 Find & Connect Users</h5>
+                  <UserList users={allUsers.filter(u => u.name !== displayName)} onConnect={handleConnect} />
+                </div>
+              </div>
+
               {/* Pending Invitations */}
               {invitations.length > 0 && (
                 <div className="card mb-4">
@@ -923,14 +931,6 @@ export default function App() {
                   </div>
                 </div>
               )}
-
-              {/* User Search */}
-              <div className="card mb-4">
-                <div className="card-body">
-                  <h5 className="card-title mb-3">🔍 Find & Connect Users</h5>
-                  <UserList users={allUsers.filter(u => u.name !== displayName)} onConnect={handleConnect} />
-                </div>
-              </div>
 
               {/* Connected Users */}
               {connections.length > 0 && (
