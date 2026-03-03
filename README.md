@@ -1,0 +1,273 @@
+# ShareRoom v1.0 - Zero-Loss Cross-Platform File Sharing
+
+A modern web application for creating collaborative "share rooms" where users can exchange files with **zero quality loss** across any platform (iPhone, Android, Windows, macOS, Linux, etc.).
+
+## 🚀 Quick Start
+
+### Prerequisites
+- Node.js 16+ installed
+- A Supabase project with credentials
+
+### Installation
+
+1. **Install dependencies:**
+   ```bash
+   npm install
+   ```
+
+2. **Configure Supabase:**
+   - Copy `.env.local` file to your project root (already created)
+   - Update it with your Supabase credentials:
+     ```env
+     VITE_SUPABASE_URL=your_project_url
+     VITE_SUPABASE_ANON_KEY=your_anon_key
+     ```
+
+3. **Run development server:**
+   ```bash
+   npm run dev
+   ```
+   The app will be available at `http://localhost:5173`
+
+4. **Build for production:**
+   ```bash
+   npm run build
+   ```
+
+## 📋 System Requirements
+
+### Must-Have Supabase Configuration
+
+Before running this app, set up your Supabase project with these tables and storage:
+
+#### 1. Create `rooms` Table
+```sql
+CREATE TABLE rooms (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name VARCHAR(255) NOT NULL,
+  description TEXT,
+  creator_name VARCHAR(100) NOT NULL,
+  max_sharers INTEGER NOT NULL DEFAULT 6,
+  max_files_per_user INTEGER NOT NULL DEFAULT 10,
+  max_file_size_mb INTEGER NOT NULL DEFAULT 200,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+```
+
+#### 2. Create `room_members` Table
+```sql
+CREATE TABLE room_members (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  room_id UUID NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  sharer_name VARCHAR(100) NOT NULL,
+  joined_at TIMESTAMP DEFAULT NOW()
+);
+```
+
+#### 3. Create `room_files` Table
+```sql
+CREATE TABLE room_files (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  room_id UUID NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  uploader_name VARCHAR(100) NOT NULL,
+  file_name VARCHAR(500) NOT NULL,
+  file_size BIGINT NOT NULL,
+  storage_path VARCHAR(1000) NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+```
+
+#### 4. Create Storage Bucket
+- Go to Storage in Supabase Console
+- Create a bucket named `room-files`
+- Set public access to **FALSE** (files accessed via signed URLs)
+
+## 🎯 Features
+
+### ✅ Core Functionality
+1. **Create Share Rooms** - Users set custom rules for their rooms
+2. **Room Rules** - Creator can define:
+   - Maximum number of sharers
+   - Maximum files per user
+   - Maximum file size per upload
+3. **Join Rooms** - Users join via room selection
+4. **File Sharing** - Upload and download files with **zero quality loss**
+5. **Real-time Updates** - See rooms, members, and files instantly
+
+### 🛡️ Zero-Loss Guarantee
+- Files are stored in their **original format** without any compression
+- No transcoding or format conversion is applied
+- Downloaded files are byte-identical to uploaded originals
+- Perfect for images, videos, documents, and all file types
+
+### 🌐 Cross-Platform
+- Works on web browsers (Chrome, Firefox, Safari, Edge)
+- Responsive design for desktop and mobile
+- No app installation required
+- Supports iOS Safari, Android Chrome, and all modern browsers
+
+## 📁 Project Structure
+
+```
+ShareRoom/
+├── public/                  # Static assets
+├── src/
+│   ├── components/          # React components
+│   │   ├── RoomList.jsx
+│   │   ├── RoomForm.jsx
+│   │   ├── RoomDetails.jsx
+│   │   └── StatusMessage.jsx
+│   ├── utils/              # Utility functions
+│   │   ├── supabase.js     # Supabase client
+│   │   └── formatting.js   # Format helpers
+│   ├── App.jsx             # Main application component
+│   ├── main.jsx            # Entry point
+│   └── index.css           # Global styles
+├── index.html              # HTML template
+├── vite.config.js          # Vite configuration
+├── package.json            # Dependencies
+└── .env.local              # Environment variables
+```
+
+## 🔧 How It Works
+
+### User Flow
+1. **Create Account** → Set display name (stored in browser)
+2. **Create Room** → Define rules and settings
+3. **Share Link** → Copy room link and share with others
+4. **Join Room** → Other users join via the room selection
+5. **Upload Files** → Users upload files (rules are enforced)
+6. **Download Files** → Download with original quality
+
+### Technical Flow
+1. User creates room → Stores in `rooms` table
+2. User joins room → Entry in `room_members` table
+3. User uploads file → 
+   - File stored in `room-files` bucket
+   - Metadata saved in `room_files` table
+4. User downloads file →
+   - Generates signed URL (120 seconds validity)
+   - Downloads original file
+
+## 🔐 Environment Setup
+
+### Supabase Credentials Location
+Get your credentials from: **https://app.supabase.com**
+
+1. Go to your project
+2. Click "Settings" → "API"
+3. Copy:
+   - **Project URL** → `VITE_SUPABASE_URL`
+   - **anon/public key** → `VITE_SUPABASE_ANON_KEY`
+
+### .env.local Format
+```env
+VITE_SUPABASE_URL=https://your-project-id.supabase.co
+VITE_SUPABASE_ANON_KEY=your-anon-key-here
+```
+
+## 🎨 Design & UX
+
+### Color Scheme
+- **Primary:** Cyan (#06b6d4)
+- **Secondary:** Amber (#f59e0b)
+- **Dark:** Slate (#0f172a)
+- **Background:** Cream/White with gradient
+
+### Typography
+- **Headings:** Space Grotesk (bold, modern)
+- **Body:** Chivo (clean, readable)
+
+### Layout
+- Two-column desktop layout (create room + room list)
+- Single column on mobile
+- Responsive cards and forms
+- Real-time status feedback
+
+## 🚀 Deployment
+
+### Deploy on Vercel (Recommended)
+```bash
+npm run build
+# Push to GitHub
+# Connect to Vercel and deploy
+```
+
+### Deploy on Netlify
+1. Build project: `npm run build`
+2. Connect GitHub repository
+3. Set build command: `npm run build`
+4. Set publish directory: `dist`
+5. Add environment variables in Netlify dashboard
+
+### Important: Environment Variables
+When deploying, add these to your hosting platform:
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
+
+## 📝 Complete Supabase Integration Checklist
+
+### Step 1: Create Tables (SQL)
+- [ ] `rooms` table
+- [ ] `room_members` table
+- [ ] `room_files` table
+
+### Step 2: Enable Storage
+- [ ] Create `room-files` bucket
+- [ ] Set bucket to private (access via signed URLs)
+
+### Step 3: Configure Security
+- [ ] Set RLS policies on tables (optional for MVP)
+- [ ] Enable Supabase Auth (if needed)
+
+### Step 4: Get Credentials
+- [ ] Copy Project URL
+- [ ] Copy Anon Key
+- [ ] Add to `.env.local`
+
+### Step 5: Test Connection
+- [ ] Open app in browser
+- [ ] Check Supabase status shows "Connected"
+- [ ] Try creating a room
+
+## 🐛 Troubleshooting
+
+### "Supabase: Connected" shows as disconnected
+- Verify `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in `.env.local`
+- Restart dev server: `npm run dev`
+- Check browser console for errors
+
+### Files not uploading
+- Verify `room-files` bucket exists in Supabase Storage
+- Check file size doesn't exceed room limit
+- Ensure bucket is public for uploads or use appropriate RLS policies
+
+### Rooms not appearing
+- Verify `rooms` table and other tables exist
+- Check your Supabase credentials
+- Verify environment variables are loaded
+
+## 🤝 Contributing
+
+Feel free to extend ShareRoom with:
+- End-to-end encryption
+- Real-time collaboration
+- File preview
+- Bulk upload/download
+- Advanced analytics
+- Dark mode toggle
+
+## 📄 License
+
+This project is open source. Use and modify freely.
+
+## 🎓 Learning Resources
+
+- [Supabase Documentation](https://supabase.com/docs)
+- [React Documentation](https://react.dev)
+- [Vite Guide](https://vitejs.dev/guide)
+- [Tailwind CSS](https://tailwindcss.com/docs)
+
+---
+
+**ShareRoom v1.0** - Built with ❤️ for seamless, zero-loss file sharing across all platforms.
