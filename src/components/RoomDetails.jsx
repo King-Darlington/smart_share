@@ -4,7 +4,9 @@ import { formatBytes, formatDateTime } from "@/utils/formatting";
 export default function RoomDetails({
   room,
   hasJoined,
+  hasPending,
   members,
+  pendingMembers = [],
   files,
   loading,
   busyMessage,
@@ -12,6 +14,8 @@ export default function RoomDetails({
   onJoin,
   onUpload,
   onDownload,
+  onApproveMember,
+  onDenyMember,
 }) {
   const [selectedFile, setSelectedFile] = useState(null);
 
@@ -25,11 +29,16 @@ export default function RoomDetails({
           </div>
           <button
             onClick={onJoin}
-            disabled={Boolean(busyMessage) || !envReady}
+            disabled={Boolean(busyMessage) || !envReady || hasJoined || hasPending}
             className="btn btn-warning btn-sm"
           >
             {hasJoined ? "✓ Joined" : "📍 Join Room"}
           </button>
+          {!hasJoined && hasPending && (
+            <small className="text-muted ms-2">
+              ⏳ Request pending
+            </small>
+          )}
         </div>
 
         {room.description && (
@@ -54,6 +63,22 @@ export default function RoomDetails({
                     ))}
                   </ul>
                 )}
+                {room.creator_name === members.find(m=>m.sharer_name===room.creator_name)?.sharer_name && pendingMembers.length>0 && (
+                  <div className="mt-3">
+                    <h6>Pending Requests</h6>
+                    <ul className="list-group">
+                      {pendingMembers.map(p => (
+                        <li key={p.id} className="list-group-item d-flex justify-content-between align-items-center">
+                          {p.sharer_name}
+                          <div>
+                            <button className="btn btn-sm btn-success me-2" onClick={() => onApproveMember(p.id)}>Approve</button>
+                            <button className="btn btn-sm btn-danger" onClick={() => onDenyMember(p.id)}>Deny</button>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -66,13 +91,22 @@ export default function RoomDetails({
                   No compression. Files stored in original format.
                 </p>
                 <form onSubmit={onUpload}>
+                  <div className="mb-2">
+                    <label className="form-label small">Retention (days)</label>
+                    <select name="retention" className="form-select form-select-sm" defaultValue={7}>
+                      {Array.from({ length: 30 }, (_, i) => i + 1).map(d => (
+                        <option key={d} value={d}>{d}</option>
+                      ))}
+                    </select>
+                  </div>
                   <input
                     type="file"
                     name="roomFile"
                     className="form-control mb-2"
+                    multiple
                     onChange={(e) => {
-                      const file = e.currentTarget.files && e.currentTarget.files[0];
-                      setSelectedFile(file || null);
+                      const files = e.currentTarget.files;
+                      setSelectedFile(files && files.length > 0 ? files : null);
                     }}
                   />
                   <button
@@ -105,21 +139,40 @@ export default function RoomDetails({
           ) : (
             <div>
               {files.map((file) => (
-                <div key={file.id} className="file-item">
+                <div key={file.id} className="file-item d-flex align-items-center mb-2">
+                  <input type="checkbox" className="form-check-input me-2" value={file.id} onChange={e => {
+                    // Track selected files for batch download
+                    if (e.target.checked) {
+                      setSelectedFile(prev => Array.isArray(prev) ? [...prev, file] : [file]);
+                    } else {
+                      setSelectedFile(prev => Array.isArray(prev) ? prev.filter(f => f.id !== file.id) : []);
+                    }
+                  }} />
                   <div className="flex-grow-1">
                     <div className="file-name">{file.file_name}</div>
                     <div className="file-meta">
                       {file.uploader_name} · {formatBytes(file.file_size)} · {formatDateTime(file.created_at)}
+                      {file.expires_at && (
+                        <> · expires {formatDateTime(file.expires_at)}</>
+                      )}
                     </div>
                   </div>
                   <button
-                    onClick={() => onDownload(file)}
+                    onClick={() => onDownload([file])}
                     className="btn btn-sm btn-outline-primary"
                   >
                     ⬇️ Download
                   </button>
                 </div>
               ))}
+              {selectedFile && Array.isArray(selectedFile) && selectedFile.length > 1 && (
+                <button
+                  className="btn btn-primary mt-2"
+                  onClick={() => onDownload(selectedFile)}
+                >
+                  ⬇️ Download Selected ({selectedFile.length})
+                </button>
+              )}
             </div>
           )}
         </div>
