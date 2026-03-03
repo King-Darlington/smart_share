@@ -120,6 +120,17 @@ export default function App() {
 
   const envReady = isSupabaseReady();
 
+  // Logout handler
+  const handleLogout = async () => {
+    if (!supabase) return;
+    await supabase.auth.signOut();
+    setUser(null);
+    setAllUsers([]);
+    setConnections([]);
+    localStorage.removeItem("share-room-user");
+    setStatusMessage("Logged out.");
+  };
+
   // Save display name to localStorage
   useEffect(() => {
         // Fetch all users from Supabase
@@ -156,6 +167,17 @@ export default function App() {
       localStorage.setItem("share-room-user", JSON.stringify(user));
     }
   }, [user]);
+  // Logout handler
+  const handleLogout = async () => {
+    if (!supabase) return;
+    await supabase.auth.signOut();
+    setUser(null);
+    setAllUsers([]);
+    setConnections([]);
+    localStorage.removeItem("share-room-user");
+    setStatusMessage("Logged out.");
+  };
+
   // Auth handler
   const handleAuth = async ({ name, email, password, mode }) => {
     setAuthing(true);
@@ -200,9 +222,13 @@ export default function App() {
           const { error: upsertErr } = await supabase.from('users').upsert(profile);
           if (upsertErr) {
             console.error('User upsert error', upsertErr);
+            setStatusMessage("Warning: could not write profile row. Check your 'users' table policies.");
+          } else {
+            console.log('User profile upserted successfully:', profile);
           }
         } catch (upsertErr) {
           console.error('Exception during user upsert', upsertErr);
+          setStatusMessage("Warning: exception while writing profile. See console for details.");
         }
         if (mode === 'signup' && name) {
           setDisplayName(name);
@@ -835,6 +861,13 @@ export default function App() {
                       <span className="input-group-text bg-white border-2" style={{borderColor: 'var(--primary-color)'}}>
                         {envReady ? '🔗' : '⚠️'}
                       </span>
+                      <button 
+                        className="btn btn-outline-danger btn-sm" 
+                        onClick={handleLogout}
+                        title="Sign out of your account"
+                      >
+                        🚪
+                      </button>
                     </div>
                     <small className="text-muted d-block mt-2">
                       {envReady

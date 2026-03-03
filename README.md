@@ -78,7 +78,7 @@ CREATE TABLE room_files (
 ```
 
 #### 4. Create `users` Table (for profile data)
-The app keeps a simple `users` table so that people can search for others by display name. Add a public select policy or an authenticated one that allows reading basic fields.
+The app keeps a simple `users` table so that people can search for others by display name. You must give the client permission to **select**, **insert**, and **update** rows in this table (typically restricted to the signed‑in user).
 
 ```sql
 CREATE TABLE users (
@@ -89,15 +89,31 @@ CREATE TABLE users (
 );
 ```
 
--- allow anyone (even non‑logged in) to SELECT id,name
+Policies you can add (paste into SQL editor):
+
+```sql
+-- anyone (even anonymous) can see basic profiles
 ALTER POLICY "Public read user profiles" ON public.users
   FOR SELECT
   USING (true);
 
--- if you prefer to require authentication instead, use:
--- USING (auth.uid() IS NOT NULL);
+-- allow logged-in users to create their own profile row
+ALTER POLICY "Insert own profile" ON public.users
+  FOR INSERT
+  WITH CHECK (auth.uid() = id);
 
-The signup flow in the app upserts a new row in this table with the chosen name. Without a proper SELECT policy, `supabase.from('users').select()` will return an error and the user list will be empty.
+-- allow users to modify only their row
+ALTER POLICY "Update own profile" ON public.users
+  FOR UPDATE
+  USING (auth.uid() = id)
+  WITH CHECK (auth.uid() = id);
+```
+
+If you'd rather require authentication for SELECT as well, change the first policy to `USING (auth.uid() IS NOT NULL)`.
+
+> 🛠 **Troubleshooting**: After signup the app will try to `upsert` your profile. If the `users` table is empty or you see a warning that profiles couldn't be written, it's almost always due to missing/incorrect policies. The console log now prints both successes and errors so you can inspect what went wrong.
+
+The signup flow in the app upserts a new row in this table with the chosen name. Without correct policies, the row is never created and the user list remains empty.
 
 #### 5. Create Storage Bucket
 - Go to Storage in Supabase Console
