@@ -900,7 +900,7 @@ export default function App() {
             </div>
 
             {/* RIGHT COLUMN: User Search + Connections + Invitations */}
-            <div className="col-lg-6 order-lg-last">
+            <div className="col-lg-6 order-lg-last search d-lg-flex flex-lg-column">
               {/* User Search (sticky on lg+) */}
               <div className="card mb-4 position-sticky" style={{ top: '1rem', zIndex: 1 }}>
                 <div className="card-body">
