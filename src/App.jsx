@@ -133,6 +133,11 @@ export default function App() {
             setAllUsers([]);
           } else if (data) {
             console.log("fetched users", data);
+            if (data.length === 0 && user) {
+              console.warn("Query returned no rows even though a user is logged in. " +
+                "This usually means the users table is empty or a Row-Level Security policy " +
+                "is filtering out results. Make sure you have a public/select policy on the table.");
+            }
             setAllUsers(data);
           }
         };
@@ -182,18 +187,25 @@ export default function App() {
       setUser(userData.user);
       localStorage.setItem("share-room-user", JSON.stringify(userData.user));
 
-      // After signup, store user name in users table
-      if (mode === 'signup' && name && userData.user?.id) {
+      // Ensure we have a row in the users table for everyone who signs in
+      if (userData.user?.id) {
+        const profile = {
+          id: userData.user.id,
+          email: userData.user.email,
+          // use the supplied name on signup, otherwise fall back to email
+          name: name || userData.user.email || "",
+          created_at: new Date().toISOString(),
+        };
         try {
-          await supabase.from('users').upsert({
-            id: userData.user.id,
-            email: userData.user.email,
-            name: name,
-            created_at: new Date().toISOString(),
-          });
-          setDisplayName(name);
+          const { error: upsertErr } = await supabase.from('users').upsert(profile);
+          if (upsertErr) {
+            console.error('User upsert error', upsertErr);
+          }
         } catch (upsertErr) {
-          console.error('Failed to store user name:', upsertErr);
+          console.error('Exception during user upsert', upsertErr);
+        }
+        if (mode === 'signup' && name) {
+          setDisplayName(name);
         }
       }
 
