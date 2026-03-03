@@ -120,17 +120,6 @@ export default function App() {
 
   const envReady = isSupabaseReady();
 
-  // Logout handler
-  const handleLogout = async () => {
-    if (!supabase) return;
-    await supabase.auth.signOut();
-    setUser(null);
-    setAllUsers([]);
-    setConnections([]);
-    localStorage.removeItem("share-room-user");
-    setStatusMessage("Logged out.");
-  };
-
   // Save display name to localStorage
   useEffect(() => {
         // Fetch all users from Supabase
@@ -167,6 +156,7 @@ export default function App() {
       localStorage.setItem("share-room-user", JSON.stringify(user));
     }
   }, [user]);
+
   // Logout handler
   const handleLogout = async () => {
     if (!supabase) return;
