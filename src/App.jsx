@@ -128,7 +128,13 @@ export default function App() {
           const { data, error } = await supabase
             .from("users") // You need a 'users' table in Supabase with at least id, name columns
             .select("id, name");
-          if (!error && data) setAllUsers(data);
+          if (error) {
+            console.error("fetchUsers error", error);
+            setAllUsers([]);
+          } else if (data) {
+            console.log("fetched users", data);
+            setAllUsers(data);
+          }
         };
         fetchUsers();
         // Optionally, add a realtime subscription for users

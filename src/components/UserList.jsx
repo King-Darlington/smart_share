@@ -2,7 +2,10 @@ import React, { useState } from "react";
 
 export default function UserList({ users, onConnect }) {
   const [search, setSearch] = useState("");
-  const filtered = users.filter(u => u.name.toLowerCase().includes(search.toLowerCase()));
+  const filtered = users.filter(u => {
+    const nameOrEmail = (u.name || "" ).toLowerCase();
+    return nameOrEmail.includes(search.toLowerCase());
+  });
 
   return (
     <div className="user-list card p-3 mb-4">
@@ -20,7 +23,7 @@ export default function UserList({ users, onConnect }) {
         ) : (
           filtered.map(user => (
             <li key={user.id} className="list-group-item d-flex justify-content-between align-items-center">
-              <span>{user.name}</span>
+              <span>{user.name || user.email || "(unknown)"}</span>
               <button className="btn btn-outline-success btn-sm" onClick={() => onConnect(user)}>
                 Connect
               </button>

@@ -77,7 +77,29 @@ CREATE TABLE room_files (
 );
 ```
 
-#### 4. Create Storage Bucket
+#### 4. Create `users` Table (for profile data)
+The app keeps a simple `users` table so that people can search for others by display name. Add a public select policy or an authenticated one that allows reading basic fields.
+
+```sql
+CREATE TABLE users (
+  id UUID PRIMARY KEY,
+  email TEXT UNIQUE,
+  name VARCHAR(100),
+  created_at TIMESTAMP DEFAULT NOW()
+);
+```
+
+-- allow anyone (even non‑logged in) to SELECT id,name
+ALTER POLICY "Public read user profiles" ON public.users
+  FOR SELECT
+  USING (true);
+
+-- if you prefer to require authentication instead, use:
+-- USING (auth.uid() IS NOT NULL);
+
+The signup flow in the app upserts a new row in this table with the chosen name. Without a proper SELECT policy, `supabase.from('users').select()` will return an error and the user list will be empty.
+
+#### 5. Create Storage Bucket
 - Go to Storage in Supabase Console
 - Create a bucket named `room-files`
 - Set public access to **FALSE** (files accessed via signed URLs)
