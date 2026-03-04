@@ -94,8 +94,8 @@ export default function RoomDetails({
                   <div className="mb-2">
                     <label className="form-label small">Retention (days)</label>
                     <select name="retention" className="form-select form-select-sm" defaultValue={7}>
-                      {Array.from({ length: 30 }, (_, i) => i + 1).map(d => (
-                        <option key={d} value={d}>{d}</option>
+                      {Array.from({ length: 30 }, (_, i) => i + 1).map(num => (
+                        <option key={num} value={num}>{num}</option>
                       ))}
                     </select>
                   </div>

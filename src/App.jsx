@@ -18,8 +18,47 @@ const initialRoomForm = {
 };
 
 export default function App() {
-      // Direct file sharing handler
-      const handleDirectSend = async (toUser, files, done) => {
+  // ============ STATE DECLARATIONS (MUST BE FIRST) ============
+  // Auth state
+  const [user, setUser] = useState(() => {
+    const saved = localStorage.getItem("share-room-user");
+    return saved ? JSON.parse(saved) : null;
+  });
+  const [authing, setAuthing] = useState(false);
+
+  // User display name
+  const displayName = user?.name || "";
+  const setDisplayName = (name) => {
+    setUser(u => ({ ...u, name }));
+    localStorage.setItem("share-room-user", JSON.stringify({ ...user, name }));
+  };
+
+  // Room state
+  const [rooms, setRooms] = useState([]);
+  const [selectedRoomId, setSelectedRoomId] = useState(null);
+  const [roomForm, setRoomForm] = useState(initialRoomForm);
+
+  // Room details
+  const [members, setMembers] = useState([]);
+  const [pendingMembers, setPendingMembers] = useState([]);
+  const [files, setFiles] = useState([]);
+
+  // UI state
+  const [loadingRooms, setLoadingRooms] = useState(false);
+  const [loadingRoomData, setLoadingRoomData] = useState(false);
+  const [busyMessage, setBusyMessage] = useState("");
+  const [statusMessage, setStatusMessage] = useState("");
+
+  // All users from Supabase
+  const [allUsers, setAllUsers] = useState([]);
+  const [connections, setConnections] = useState([]);
+
+  // Invitations
+  const [invitations, setInvitations] = useState([]);
+
+  // ============ HANDLER FUNCTIONS ============
+  // Direct file sharing handler
+  const handleDirectSend = async (toUser, files, done) => {
         setBusyMessage(`Sending ${files.length} file(s) to ${toUser.name}...`);
         const ALLOWED_TYPES = ['image', 'audio', 'video'];
         let sendErrors = [];
@@ -74,86 +113,54 @@ export default function App() {
         }
         if (done) done();
       };
-    // All users from Supabase
-    const [allUsers, setAllUsers] = useState([]);
-    const [connections, setConnections] = useState([]);
 
-    // Load persistent connections
-    useEffect(() => {
-      const loadConnections = async () => {
-        if (!supabase || !user?.id) return;
-        const { data, error } = await supabase
-          .from('user_connections')
-          .select('id, user_a, user_b, status')
-          .or(`user_a.eq.${user.id},user_b.eq.${user.id}`)
-          .eq('status', 'accepted');
-        if (error) {
-          console.error('loadConnections error', error);
-        } else if (data) {
-          // Map back to user objects
-          const connectedIds = data.map(c => c.user_a === user.id ? c.user_b : c.user_a);
-          const { data: connectedUsers } = await supabase
-            .from('users')
-            .select('id, name')
-            .in('id', connectedIds);
-          setConnections(connectedUsers || []);
-        }
-      };
-      loadConnections();
-    }, [user?.id]);
-
-    // Connect to a user
-    const handleConnect = async (targetUser) => {
+  // Load persistent connections
+  useEffect(() => {
+    const loadConnections = async () => {
       if (!supabase || !user?.id) return;
-      
-      // Create bidirectional connection record (always store smaller ID first)
-      const [firstId, secondId] = user.id < targetUser.id 
-        ? [user.id, targetUser.id] 
-        : [targetUser.id, user.id];
-      
-      const { data, error } = await supabase.from('user_connections').insert({
-        user_a: firstId,
-        user_b: secondId,
-        status: 'accepted'
-      }).select();
-      
+      const { data, error } = await supabase
+        .from('user_connections')
+        .select('id, user_a, user_b, status')
+        .or(`user_a.eq.${user.id},user_b.eq.${user.id}`)
+        .eq('status', 'accepted');
       if (error) {
-        console.error('Connect error', error);
-        setStatusMessage(`Could not connect: ${error.message}`);
+        console.error('loadConnections error', error);
       } else if (data) {
-        setConnections(prev => [...prev, targetUser]);
-        setStatusMessage(`Connected with ${targetUser.name}`);
+        // Map back to user objects
+        const connectedIds = data.map(c => c.user_a === user.id ? c.user_b : c.user_a);
+        const { data: connectedUsers } = await supabase
+          .from('users')
+          .select('id, name')
+          .in('id', connectedIds);
+        setConnections(connectedUsers || []);
       }
     };
-  // Auth state
-  const [user, setUser] = useState(() => {
-    const saved = localStorage.getItem("share-room-user");
-    return saved ? JSON.parse(saved) : null;
-  });
-  const [authing, setAuthing] = useState(false);
+    loadConnections();
+  }, [user?.id]);
 
-  // User display name
-  const displayName = user?.name || "";
-  const setDisplayName = (name) => {
-    setUser(u => ({ ...u, name }));
-    localStorage.setItem("share-room-user", JSON.stringify({ ...user, name }));
+  // Connect to a user
+  const handleConnect = async (targetUser) => {
+    if (!supabase || !user?.id) return;
+    
+    // Create bidirectional connection record (always store smaller ID first)
+    const [firstId, secondId] = user.id < targetUser.id 
+      ? [user.id, targetUser.id] 
+      : [targetUser.id, user.id];
+    
+    const { data, error } = await supabase.from('user_connections').insert({
+      user_a: firstId,
+      user_b: secondId,
+      status: 'accepted'
+    }).select();
+    
+    if (error) {
+      console.error('Connect error', error);
+      setStatusMessage(`Could not connect: ${error.message}`);
+    } else if (data) {
+      setConnections(prev => [...prev, targetUser]);
+      setStatusMessage(`Connected with ${targetUser.name}`);
+    }
   };
-
-  // Room state
-  const [rooms, setRooms] = useState([]);
-  const [selectedRoomId, setSelectedRoomId] = useState(null);
-  const [roomForm, setRoomForm] = useState(initialRoomForm);
-
-  // Room details
-  const [members, setMembers] = useState([]);
-  const [pendingMembers, setPendingMembers] = useState([]);
-  const [files, setFiles] = useState([]);
-
-  // UI state
-  const [loadingRooms, setLoadingRooms] = useState(false);
-  const [loadingRoomData, setLoadingRoomData] = useState(false);
-  const [busyMessage, setBusyMessage] = useState("");
-  const [statusMessage, setStatusMessage] = useState("");
 
   const selectedRoom = useMemo(() => {
     return rooms.find((room) => room.id === selectedRoomId) || null;
@@ -306,7 +313,6 @@ export default function App() {
     }
   };
 
-  const [invitations, setInvitations] = useState([]);
   useEffect(() => {
     let invSub = null;
     const fetchInvitations = async () => {
@@ -391,19 +397,15 @@ export default function App() {
       staleDate.setDate(staleDate.getDate() - STALE_THRESHOLD_DAYS);
 
       // Clean up stale pending membership requests
+      // Skip status-based cleanup for now - schema may not have status column yet
       try {
+        // Try to delete without status filter first
         const { error: memberError } = await supabase
           .from("room_members")
           .delete()
-          .eq("status", "pending")
           .lt("created_at", staleDate.toISOString());
-        if (memberError) {
-          // Suppress "column does not exist" errors - expected if schema isn't fully set up
-          if (memberError.message?.includes("does not exist")) {
-            // silently skip
-          } else {
-            console.warn("Cleanup warning for room_members:", memberError?.message || memberError);
-          }
+        if (memberError && !memberError.message?.includes("does not exist")) {
+          console.warn("Cleanup warning for room_members:", memberError?.message || memberError);
         }
       } catch (err) {
         // silently ignore cleanup exceptions
@@ -450,6 +452,9 @@ export default function App() {
       }
       setLoadingRoomData(true);
       let membersResponse, filesResponse;
+      
+      // Query without optional columns first (status, file_hash, expires_at)
+      // These are added via migration but may not exist in older schemas
       try {
         [membersResponse, filesResponse] = await Promise.all([
           supabase
@@ -459,23 +464,32 @@ export default function App() {
             .order("joined_at", { ascending: true }),
           supabase
             .from("room_files")
-            .select("id, room_id, uploader_name, file_name, file_size, storage_path, created_at, file_hash")
+            .select("id, room_id, uploader_name, file_name, file_size, storage_path, created_at, file_hash, expires_at")
             .eq("room_id", selectedRoomId)
             .order("created_at", { ascending: false }),
         ]);
       } catch (err) {
-        // If selecting status fails (column missing), retry members without status
-        console.warn('Initial loadRoomDetails query failed, retrying without status if possible', err?.message || err);
-        filesResponse = await supabase
-          .from("room_files")
-          .select("id, room_id, uploader_name, file_name, file_size, storage_path, created_at, file_hash")
-          .eq("room_id", selectedRoomId)
-          .order("created_at", { ascending: false });
-        membersResponse = await supabase
-          .from("room_members")
-          .select("id, room_id, sharer_name, joined_at")
-          .eq("room_id", selectedRoomId)
-          .order("joined_at", { ascending: true });
+        // If columns don't exist, retry without them
+        console.warn('Retrying loadRoomDetails without optional columns:', err?.message || err);
+        try {
+          [membersResponse, filesResponse] = await Promise.all([
+            supabase
+              .from("room_members")
+              .select("id, room_id, sharer_name, joined_at")
+              .eq("room_id", selectedRoomId)
+              .order("joined_at", { ascending: true }),
+            supabase
+              .from("room_files")
+              .select("id, room_id, uploader_name, file_name, file_size, storage_path, created_at")
+              .eq("room_id", selectedRoomId)
+              .order("created_at", { ascending: false }),
+          ]);
+        } catch (retryErr) {
+          console.error('loadRoomDetails retry failed', retryErr);
+          setLoadingRoomData(false);
+          setStatusMessage(`Could not load room details: ${retryErr.message}`);
+          return;
+        }
       }
       setLoadingRoomData(false);
       if (membersResponse.error || filesResponse.error) {
@@ -487,16 +501,23 @@ export default function App() {
       const membersData = membersResponse.data || [];
       setMembers(membersData);
       // maintain pending member list separately so UI can show approvals
-      setPendingMembers(membersData.filter(m => m.status === "pending"));
-      // remove expired files locally and from storage
+      // Filter by status if column exists, otherwise treat all as approved
+      setPendingMembers(membersData.filter(m => m.status === "pending") || []);
+      // remove expired files locally and from storage (if expires_at column exists)
+      const filesData = filesResponse.data || [];
       const now = new Date().toISOString();
-      const expired = (filesResponse.data || []).filter(f => f.expires_at && f.expires_at < now);
+      const expired = filesData.filter(f => f.expires_at && f.expires_at < now);
       for (const f of expired) {
-        await supabase.storage.from(roomFilesBucket).remove([f.storage_path]);
-        await supabase.from("room_files").delete().eq("id", f.id);
+        try {
+          await supabase.storage.from(roomFilesBucket).remove([f.storage_path]);
+          await supabase.from("room_files").delete().eq("id", f.id);
+        } catch (cleanErr) {
+          console.warn('File cleanup error:', cleanErr?.message || cleanErr);
+        }
       }
-      const validFiles = (filesResponse.data || []).filter(f => !f.expires_at || f.expires_at >= now);
+      const validFiles = filesData.filter(f => !f.expires_at || f.expires_at >= now);
       setFiles(validFiles);
+      setLoadingRoomData(false);
       setStatusMessage("");
     };
     loadRoomDetails();
@@ -572,10 +593,21 @@ export default function App() {
   const handleApproveMember = async (memberId) => {
     if (!supabase) return;
     setBusyMessage("Approving member...");
-    const { error } = await supabase
+    // Try update with status first, fallback if column doesn't exist
+    let result = await supabase
       .from("room_members")
       .update({ status: 'approved', joined_at: new Date().toISOString() })
       .eq("id", memberId);
+    
+    // If status column doesn't exist, retry with just joined_at
+    if (result.error && result.error.message?.includes("status")) {
+      result = await supabase
+        .from("room_members")
+        .update({ joined_at: new Date().toISOString() })
+        .eq("id", memberId);
+    }
+    
+    const { error } = result;
     setBusyMessage("");
     if (error) {
       setStatusMessage(`Could not approve member: ${error.message}`);
@@ -637,14 +669,22 @@ export default function App() {
     }
 
     // Auto-join creator to their own room
-    const { error: joinError } = await supabase.from("room_members").insert({
+    let joinResult = await supabase.from("room_members").insert({
       room_id: data.id,
       sharer_name: displayName,
       status: 'approved',
     });
 
-    if (joinError) {
-      console.error("Creator auto-join error", joinError);
+    // If status column doesn't exist, retry without it
+    if (joinResult.error && joinResult.error.message?.includes("status")) {
+      joinResult = await supabase.from("room_members").insert({
+        room_id: data.id,
+        sharer_name: displayName,
+      });
+    }
+
+    if (joinResult.error) {
+      console.error("Creator auto-join error", joinResult.error);
     }
 
     setRoomForm(initialRoomForm);
@@ -672,12 +712,25 @@ export default function App() {
 
     setBusyMessage("Requesting to join room...");
 
-    const { data, error } = await supabase.from("room_members").insert({
+    let data, error;
+    // Try insert with status column first (if it exists from migration)
+    const insertPayload = {
       room_id: selectedRoom.id,
       sharer_name: displayName,
+    };
+    
+    // Try with status first
+    let result = await supabase.from("room_members").insert({
+      ...insertPayload,
       status: 'pending',
     }).select().single();
-
+    
+    // If status column doesn't exist, retry without it
+    if (result.error && result.error.message?.includes("status")) {
+      result = await supabase.from("room_members").insert(insertPayload).select().single();
+    }
+    
+    ({ data, error } = result);
     setBusyMessage("");
 
     if (error) {
@@ -764,8 +817,20 @@ export default function App() {
           expires_at: expiresAt,
         });
 
-        if (metadataResponse.error) {
-          uploadErrors.push(`File saved but metadata failed for ${candidate.name}: ${metadataResponse.error.message}`);
+        // If optional columns don't exist, retry without them
+        let finalMetadataResponse = metadataResponse;
+        if (metadataResponse.error && (metadataResponse.error.message?.includes("file_hash") || metadataResponse.error.message?.includes("expires_at"))) {
+          finalMetadataResponse = await supabase.from("room_files").insert({
+            room_id: selectedRoom.id,
+            uploader_name: displayName,
+            file_name: candidate.name,
+            file_size: candidate.size,
+            storage_path: storageBase,
+          });
+        }
+
+        if (finalMetadataResponse.error) {
+          uploadErrors.push(`File saved but metadata failed for ${candidate.name}: ${finalMetadataResponse.error.message}`);
           return;
         }
       } catch (err) {
