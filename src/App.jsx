@@ -20,42 +20,52 @@ const initialRoomForm = {
 export default function App() {
       // Direct file sharing handler
       const handleDirectSend = async (toUser, files, done) => {
-        // For demo: just show status. In production, upload to Supabase with metadata (fromUser, toUser)
         setBusyMessage(`Sending ${files.length} file(s) to ${toUser.name}...`);
+        const ALLOWED_TYPES = ['image', 'audio', 'video'];
         let sendErrors = [];
+
         await Promise.all(Array.from(files).map(async (candidate) => {
-          // Integrity check: calculate SHA-256 hash
-          const hashBuffer = await crypto.subtle.digest('SHA-256', await candidate.arrayBuffer());
-          const hashArray = Array.from(new Uint8Array(hashBuffer));
-          const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-          const safeName = candidate.name.replace(/\s+/g, "-");
-          const storageBase = `direct/${user.name}_to_${toUser.name}/${crypto.randomUUID()}-${safeName}`;
-          const CHUNK_SIZE = 5 * 1024 * 1024;
-          if (candidate.size > 20 * 1024 * 1024) {
-            const totalChunks = Math.ceil(candidate.size / CHUNK_SIZE);
-            for (let i = 0; i < totalChunks; i++) {
-              const chunk = candidate.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
-              const chunkPath = `${storageBase}.chunk${i}`;
-              const uploadResponse = await supabase.storage
-                .from(roomFilesBucket)
-                .upload(chunkPath, chunk, { upsert: false });
-              if (uploadResponse.error) {
-                sendErrors.push(`Chunk ${i + 1}/${totalChunks} upload failed for ${candidate.name}: ${uploadResponse.error.message}`);
-                return;
-              }
-            }
-            // Metadata placeholder for direct sharing
-            // In production, use a direct_files table for reassembly
-          } else {
+          const fileType = candidate.type.split('/')[0];
+          if (!ALLOWED_TYPES.includes(fileType)) {
+            sendErrors.push(`${candidate.name} is not an image, audio, or video file.`);
+            return;
+          }
+
+          try {
+            const hashBuffer = await crypto.subtle.digest('SHA-256', await candidate.arrayBuffer());
+            const hashArray = Array.from(new Uint8Array(hashBuffer));
+            const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+            const safeName = candidate.name.replace(/\s+/g, "-");
+            const storageBase = `direct/${user.id}_to_${toUser.id}/${crypto.randomUUID()}-${safeName}`;
+
             const uploadResponse = await supabase.storage
               .from(roomFilesBucket)
               .upload(storageBase, candidate, { upsert: false });
+
             if (uploadResponse.error) {
               sendErrors.push(`Upload failed for ${candidate.name}: ${uploadResponse.error.message}`);
               return;
             }
+
+            // Record in direct_shares table
+            const { error: dbError } = await supabase.from('direct_shares').insert({
+              from_user_id: user.id,
+              to_user_id: toUser.id,
+              file_name: candidate.name,
+              storage_path: storageBase,
+              file_type: fileType,
+              file_size: candidate.size,
+              file_hash: hashHex
+            });
+
+            if (dbError) {
+              sendErrors.push(`File saved but metadata failed for ${candidate.name}: ${dbError.message}`);
+            }
+          } catch (err) {
+            sendErrors.push(`Error processing ${candidate.name}: ${err.message}`);
           }
         }));
+
         setBusyMessage("");
         if (sendErrors.length > 0) {
           setStatusMessage(sendErrors.join("\n"));
@@ -68,10 +78,51 @@ export default function App() {
     const [allUsers, setAllUsers] = useState([]);
     const [connections, setConnections] = useState([]);
 
+    // Load persistent connections
+    useEffect(() => {
+      const loadConnections = async () => {
+        if (!supabase || !user?.id) return;
+        const { data, error } = await supabase
+          .from('user_connections')
+          .select('id, user_a, user_b, status')
+          .or(`user_a.eq.${user.id},user_b.eq.${user.id}`)
+          .eq('status', 'accepted');
+        if (error) {
+          console.error('loadConnections error', error);
+        } else if (data) {
+          // Map back to user objects
+          const connectedIds = data.map(c => c.user_a === user.id ? c.user_b : c.user_a);
+          const { data: connectedUsers } = await supabase
+            .from('users')
+            .select('id, name')
+            .in('id', connectedIds);
+          setConnections(connectedUsers || []);
+        }
+      };
+      loadConnections();
+    }, [user?.id]);
+
     // Connect to a user
-    const handleConnect = (user) => {
-      if (!connections.some(u => u.id === user.id)) {
-        setConnections(prev => [...prev, user]);
+    const handleConnect = async (targetUser) => {
+      if (!supabase || !user?.id) return;
+      
+      // Create bidirectional connection record (always store smaller ID first)
+      const [firstId, secondId] = user.id < targetUser.id 
+        ? [user.id, targetUser.id] 
+        : [targetUser.id, user.id];
+      
+      const { data, error } = await supabase.from('user_connections').insert({
+        user_a: firstId,
+        user_b: secondId,
+        status: 'accepted'
+      }).select();
+      
+      if (error) {
+        console.error('Connect error', error);
+        setStatusMessage(`Could not connect: ${error.message}`);
+      } else if (data) {
+        setConnections(prev => [...prev, targetUser]);
+        setStatusMessage(`Connected with ${targetUser.name}`);
       }
     };
   // Auth state
@@ -585,6 +636,17 @@ export default function App() {
       return;
     }
 
+    // Auto-join creator to their own room
+    const { error: joinError } = await supabase.from("room_members").insert({
+      room_id: data.id,
+      sharer_name: displayName,
+      status: 'approved',
+    });
+
+    if (joinError) {
+      console.error("Creator auto-join error", joinError);
+    }
+
     setRoomForm(initialRoomForm);
     setStatusMessage("Room created successfully.");
     setSelectedRoomId(data.id);
@@ -641,6 +703,8 @@ export default function App() {
     const formData = new FormData(event.currentTarget);
     const filesList = event.currentTarget.roomFile.files;
     const retentionDays = Number(formData.get("retention")) || 7;
+    const ALLOWED_TYPES = ['image', 'audio', 'video'];
+    
     if (!filesList || filesList.length === 0) {
       setStatusMessage("Choose at least one file.");
       return;
@@ -661,60 +725,35 @@ export default function App() {
     setBusyMessage(`Uploading ${filesList.length} file(s) in zero-loss mode...`);
 
     await Promise.all(Array.from(filesList).map(async (candidate) => {
+      const fileType = candidate.type.split('/')[0];
+      if (!ALLOWED_TYPES.includes(fileType)) {
+        uploadErrors.push(`${candidate.name} is not an image, audio, or video file.`);
+        return;
+      }
+
       if (candidate.size > selectedRoom.max_file_size_mb * 1024 * 1024) {
         uploadErrors.push(`${candidate.name} exceeds ${selectedRoom.max_file_size_mb} MB room limit.`);
         return;
       }
 
-      // Integrity check: calculate SHA-256 hash
-      const hashBuffer = await crypto.subtle.digest('SHA-256', await candidate.arrayBuffer());
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-      const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+      try {
+        const hashBuffer = await crypto.subtle.digest('SHA-256', await candidate.arrayBuffer());
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 
-      const safeName = candidate.name.replace(/\s+/g, "-");
-      const storageBase = `${selectedRoom.id}/${crypto.randomUUID()}-${safeName}`;
-      const expiresAt = new Date(Date.now() + retentionDays * 24 * 60 * 60 * 1000).toISOString();
+        const safeName = candidate.name.replace(/\s+/g, "-");
+        const storageBase = `${selectedRoom.id}/${crypto.randomUUID()}-${safeName}`;
+        const expiresAt = new Date(Date.now() + retentionDays * 24 * 60 * 60 * 1000).toISOString();
 
-      // Chunked upload for files > 20MB
-      const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB
-      if (candidate.size > 20 * 1024 * 1024) {
-        const totalChunks = Math.ceil(candidate.size / CHUNK_SIZE);
-        for (let i = 0; i < totalChunks; i++) {
-          const chunk = candidate.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
-          const chunkPath = `${storageBase}.chunk${i}`;
-          const uploadResponse = await supabase.storage
-            .from(roomFilesBucket)
-            .upload(chunkPath, chunk, { upsert: false });
-          if (uploadResponse.error) {
-            uploadErrors.push(`Chunk ${i + 1}/${totalChunks} upload failed for ${candidate.name}: ${uploadResponse.error.message}`);
-            return;
-          }
-        }
-        // Store metadata for reassembly
-        const metadataResponse = await supabase.from("room_files").insert({
-          room_id: selectedRoom.id,
-          uploader_name: displayName,
-          file_name: candidate.name,
-          file_size: candidate.size,
-          storage_path: storageBase,
-          file_hash: hashHex,
-          chunked: true,
-          chunk_count: totalChunks,
-          expires_at: expiresAt,
-        });
-        if (metadataResponse.error) {
-          uploadErrors.push(`File saved but metadata failed for ${candidate.name}: ${metadataResponse.error.message}`);
-          return;
-        }
-      } else {
-        // Single upload for small files
         const uploadResponse = await supabase.storage
           .from(roomFilesBucket)
           .upload(storageBase, candidate, { upsert: false });
+
         if (uploadResponse.error) {
           uploadErrors.push(`Upload failed for ${candidate.name}: ${uploadResponse.error.message}`);
           return;
         }
+
         const metadataResponse = await supabase.from("room_files").insert({
           room_id: selectedRoom.id,
           uploader_name: displayName,
@@ -722,13 +761,15 @@ export default function App() {
           file_size: candidate.size,
           storage_path: storageBase,
           file_hash: hashHex,
-          chunked: false,
           expires_at: expiresAt,
         });
+
         if (metadataResponse.error) {
           uploadErrors.push(`File saved but metadata failed for ${candidate.name}: ${metadataResponse.error.message}`);
           return;
         }
+      } catch (err) {
+        uploadErrors.push(`Error processing ${candidate.name}: ${err.message}`);
       }
     }));
 

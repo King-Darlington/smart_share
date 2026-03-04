@@ -115,7 +115,67 @@ If you'd rather require authentication for SELECT as well, change the first poli
 
 The signup flow in the app upserts a new row in this table with the chosen name. Without correct policies, the row is never created and the user list remains empty.
 
-#### 5. Create Storage Bucket
+#### 5. Create `user_connections` Table (for persistent connections)
+Stores bidirectional user connections/relationships for the "find & connect users" feature.
+
+```sql
+CREATE TABLE user_connections (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_a UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  user_b UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  status VARCHAR(20) DEFAULT 'pending',
+  created_at TIMESTAMP DEFAULT NOW(),
+  UNIQUE(user_a, user_b),
+  CHECK (user_a < user_b)
+);
+
+-- Policies: allow users to see/create/update their own connections
+CREATE POLICY "Users can see their connections" ON public.user_connections
+  FOR SELECT
+  USING (auth.uid() = user_a OR auth.uid() = user_b);
+
+CREATE POLICY "Users can create connections" ON public.user_connections
+  FOR INSERT
+  WITH CHECK (auth.uid() = user_a OR auth.uid() = user_b);
+
+CREATE POLICY "Users can update their connections" ON public.user_connections
+  FOR UPDATE
+  USING (auth.uid() = user_a OR auth.uid() = user_b);
+```
+
+#### 6. Create `direct_shares` Table (for direct file sharing)
+Tracks direct P2P file transfers between users.
+
+```sql
+CREATE TABLE direct_shares (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  from_user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  to_user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  file_name VARCHAR(500) NOT NULL,
+  storage_path VARCHAR(1000) NOT NULL,
+  file_type VARCHAR(20) NOT NULL,
+  file_size BIGINT NOT NULL,
+  file_hash VARCHAR(64),
+  downloaded BOOLEAN DEFAULT false,
+  created_at TIMESTAMP DEFAULT NOW(),
+  expires_at TIMESTAMP DEFAULT NOW() + INTERVAL '7 days'
+);
+
+-- Policies
+CREATE POLICY "Users can see shares sent to them" ON public.direct_shares
+  FOR SELECT
+  USING (auth.uid() = to_user_id OR auth.uid() = from_user_id);
+
+CREATE POLICY "Users can create shares" ON public.direct_shares
+  FOR INSERT
+  WITH CHECK (auth.uid() = from_user_id);
+
+CREATE POLICY "Recipient can mark as downloaded" ON public.direct_shares
+  FOR UPDATE
+  USING (auth.uid() = to_user_id);
+```
+
+#### 7. Create Storage Bucket
 - Go to Storage in Supabase Console
 - Create a bucket named `room-files`
 - Set public access to **FALSE** (files accessed via signed URLs)
