@@ -78,6 +78,9 @@ export default function App() {
   const [allUsers, setAllUsers] = useState([]);
   const [connections, setConnections] = useState([]);
 
+  // Received direct shares
+  const [receivedShares, setReceivedShares] = useState([]);
+
   // Invitations
   const [invitations, setInvitations] = useState([]);
 
@@ -219,6 +222,43 @@ export default function App() {
     };
     loadConnections();
   }, [user?.id]);
+
+  // fetch received direct shares for the logged-in user
+  const loadReceivedShares = async () => {
+    if (!supabase || !user?.id) return;
+    const { data, error } = await supabase
+      .from('direct_shares')
+      .select('*')
+      .eq('to_user_id', user.id)
+      .order('created_at', { ascending: false });
+    if (error) {
+      console.error('loadReceivedShares error', error);
+      return;
+    }
+    const shares = data || [];
+    // lookup sender names
+    const senderIds = Array.from(new Set(shares.map(s => s.from_user_id)));
+    let nameMap = {};
+    if (senderIds.length > 0) {
+      const { data: usersData } = await supabase
+        .from('users')
+        .select('id,name')
+        .in('id', senderIds);
+      if (usersData) {
+        nameMap = Object.fromEntries(usersData.map(u => [u.id, u.name]));
+      }
+    }
+    setReceivedShares(shares.map(s => ({ ...s, from_name: nameMap[s.from_user_id] || '' })));
+  };
+
+  // handle downloading a received share
+  const handleDownloadDirect = async (share) => {
+    await handleDownload(share);
+    if (!supabase) return;
+    const { error } = await supabase.from('direct_shares').update({ downloaded: true }).eq('id', share.id);
+    if (error) console.error('mark direct share downloaded error', error);
+    setReceivedShares(prev => prev.map(s => s.id === share.id ? { ...s, downloaded: true } : s));
+  };
 
   // Connect to a user (persist to DB and localStorage)
   const handleConnect = async (targetUser) => {
