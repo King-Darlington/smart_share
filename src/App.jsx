@@ -18,19 +18,44 @@ const initialRoomForm = {
 };
 
 export default function App() {
-  // ============ STATE DECLARATIONS (MUST BE FIRST) ============
-  // Auth state
-  const [user, setUser] = useState(() => {
-    const saved = localStorage.getItem("share-room-user");
-    return saved ? JSON.parse(saved) : null;
-  });
+  // Listen for auth state changes
+  useEffect(() => {
+    if (!supabase) return;
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      console.log('Auth state change:', event, session?.user);
+      if (session?.user) {
+        setUser(session.user);
+        localStorage.setItem("share-room-user", JSON.stringify(session.user));
+      } else {
+        setUser(null);
+        localStorage.removeItem("share-room-user");
+      }
+    });
+
+    // Check current session on mount
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      console.log('Initial session check:', session?.user);
+      if (session?.user) {
+        setUser(session.user);
+        localStorage.setItem("share-room-user", JSON.stringify(session.user));
+      } else {
+        setUser(null);
+        localStorage.removeItem("share-room-user");
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
   const [authing, setAuthing] = useState(false);
+
+  // Auth state (managed by auth listener)
+  const [user, setUser] = useState(null);
 
   // User display name
   const displayName = user?.name || "";
   const setDisplayName = (name) => {
     setUser(u => ({ ...u, name }));
-    localStorage.setItem("share-room-user", JSON.stringify({ ...user, name }));
   };
 
   // Room state
@@ -55,6 +80,9 @@ export default function App() {
 
   // Invitations
   const [invitations, setInvitations] = useState([]);
+
+  // Selected connected user for direct sharing
+  const [selectedConnectedUser, setSelectedConnectedUser] = useState(null);
 
   // ============ HANDLER FUNCTIONS ============
   // Direct file sharing handler
@@ -141,8 +169,15 @@ export default function App() {
               console.error('Error fetching connected user records:', userErr);
             }
             if (Array.isArray(connectedUsers)) dbUsers = connectedUsers;
+            console.log("✅ Load connections: Found", dbUsers.length, "DB connections");
           } else if (error) {
-            console.error('loadConnections DB error, will use local cache:', error);
+            console.error("❌ Load connections FAILED: user_connections query error", {
+              code: error.code,
+              message: error.message,
+              details: error.details,
+              hint: error.hint,
+              suggestion: "Run CREATE_TABLES.sql to create user_connections table"
+            });
           }
         } else {
           console.warn('supabase instance not available when loading connections');
@@ -151,8 +186,19 @@ export default function App() {
         console.error('loadConnections exception, using local cache:', err);
       }
 
+      // Load local cache
+      let local = [];
+      try {
+        const raw = localStorage.getItem(connKey);
+        local = raw ? JSON.parse(raw) : [];
+        console.log("✅ Load connections: Found", local.length, "local cached connections");
+      } catch (err) {
+        console.error("❌ Load connections: Could not parse local connections", err);
+        local = [];
+      }
+
       // Normalize local entries to {id, name} and include unsynced records
-      const localUsers = [];
+      const localUsers = local.map(l => ({ id: l.id, name: l.name }));
 
       // Merge DB-first, then local-only entries
       const mergedById = new Map();
@@ -160,6 +206,7 @@ export default function App() {
       for (const u of localUsers) if (!mergedById.has(u.id)) mergedById.set(u.id, u);
 
       const merged = Array.from(mergedById.values());
+      console.log("✅ Load connections: Merged total", merged.length, "connections (DB:", dbUsers.length, ", local:", localUsers.length, ")");
 
       // Persist merged back to localStorage so local cache stays in sync
       try {
@@ -175,18 +222,29 @@ export default function App() {
 
   // Connect to a user (persist to DB and localStorage)
   const handleConnect = async (targetUser) => {
+    console.log('handleConnect invoked with targetUser:', targetUser, 'current user:', user);
     if (!user || !user.id) {
-      console.error('handleConnect called but user or user.id is missing', user);
-      setStatusMessage('Cannot connect: no authenticated user');
+      console.error('❌ Connect BLOCKED: No authenticated user', user);
+      setStatusMessage('Please log in first');
+      return;
+    }
+    if (!targetUser || !targetUser.id || !targetUser.name) {
+      console.error('❌ Connect BLOCKED: Invalid target user', targetUser);
+      setStatusMessage('Invalid user to connect to');
+      return;
+    }
+    if (targetUser.id === user.id) {
+      console.error('❌ Connect BLOCKED: Cannot connect to yourself');
+      setStatusMessage('Cannot connect to yourself');
       return;
     }
     if (!supabase) {
-      console.error('handleConnect called but supabase client is unavailable');
-      setStatusMessage('Cannot connect: backend not ready');
+      console.error('❌ Connect BLOCKED: Supabase client unavailable');
+      setStatusMessage('Backend not ready');
       return;
     }
     setStatusMessage(`Connecting to ${targetUser.name}...`);
-    console.log('handleConnect invoked for', targetUser);
+    console.log('✅ handleConnect proceeding for', targetUser);
 
     // Create bidirectional connection record (always store smaller ID first)
     const [firstId, secondId] = user.id < targetUser.id ? [user.id, targetUser.id] : [targetUser.id, user.id];
@@ -199,15 +257,27 @@ export default function App() {
       if (supabase) {
         const res = await supabase.from('user_connections').upsert(payload, { onConflict: ['user_a', 'user_b'] }).select();
         if (res.error) {
-          console.error('user_connections upsert failed', res.error);
+          console.error("❌ Connect FAILED: user_connections upsert error", {
+            code: res.error.code,
+            message: res.error.message,
+            details: res.error.details,
+            hint: res.error.hint,
+            suggestion: "Run CREATE_TABLES.sql in Supabase SQL Editor to create user_connections table"
+          });
           // record failure message
           setStatusMessage(`Could not save connection to server: ${res.error.message}`);
         } else {
           dbOk = true;
+          console.log("✅ Connect SUCCESS: Saved to database");
         }
       }
     } catch (err) {
-      console.error('user_connections upsert exception (will still cache locally):', err);
+      console.error("❌ Connect EXCEPTION: user_connections upsert failed", {
+        error: err,
+        message: err?.message || err,
+        stack: err?.stack,
+        suggestion: "Check network, table existence, or RLS policies"
+      });
       setStatusMessage(`Connection saved locally but server error: ${err?.message || err}`);
     }
 
@@ -264,7 +334,7 @@ export default function App() {
             console.error("fetchUsers error", error);
             setAllUsers([]);
           } else if (data) {
-            console.log("fetched users", data);
+            console.log("✅ fetched users", data.length, "users:", data.map(u => ({ id: u.id, name: u.name, hasPassword: !!u.password })));
             if (data.length === 0 && user) {
               console.warn("Query returned no rows even though a user is logged in. " +
                 "This usually means the users table is empty or a Row-Level Security policy " +
@@ -284,10 +354,7 @@ export default function App() {
         return () => {
           supabase.removeChannel(usersSub);
         };
-    if (user) {
-      localStorage.setItem("share-room-user", JSON.stringify(user));
-    }
-  }, [user]);
+  }, []);
 
   // Logout handler
   const handleLogout = async () => {
@@ -328,8 +395,17 @@ export default function App() {
     // Get user info
     try {
       const { data: userData } = await supabase.auth.getUser();
-      setUser(userData.user);
-      localStorage.setItem("share-room-user", JSON.stringify(userData.user));
+      console.log('Auth successful, userData:', userData);
+      if (userData.user) {
+        setUser(userData.user);
+        localStorage.setItem("share-room-user", JSON.stringify(userData.user));
+        console.log('User state set to:', userData.user);
+      } else {
+        console.error('No user in auth response');
+        setStatusMessage('Authentication failed - no user data');
+        setAuthing(false);
+        return;
+      }
 
       // Ensure we have a row in the users table for everyone who signs in
       if (userData.user?.id) {
@@ -471,7 +547,7 @@ export default function App() {
       staleDate.setDate(staleDate.getDate() - STALE_THRESHOLD_DAYS);
 
       // Clean up stale pending membership requests
-      // Skip status-based cleanup for now - schema may not have status column yet
+      // Skip if created_at column doesn't exist (schema not fully migrated)
       try {
         // Try to delete without status filter first
         const { error: memberError } = await supabase
@@ -479,10 +555,31 @@ export default function App() {
           .delete()
           .lt("created_at", staleDate.toISOString());
         if (memberError) {
-          console.error("Cleanup error deleting room_members:", memberError);
+          if (memberError.code === '42703' && memberError.message.includes('created_at')) {
+            console.log('⏭️ Cleanup SKIPPED: created_at column missing from room_members (run migration)');
+          } else {
+            console.error("❌ Cleanup FAILED: room_members delete error", {
+              code: memberError.code,
+              message: memberError.message,
+              details: memberError.details,
+              hint: memberError.hint,
+              url: "Check if 'created_at' column exists in room_members table"
+            });
+          }
+        } else {
+          console.log("✅ Cleanup: Successfully cleaned stale room_members");
         }
       } catch (err) {
-        console.error("Cleanup exception while deleting room_members:", err);
+        if (err?.message?.includes('created_at')) {
+          console.log('⏭️ Cleanup SKIPPED: created_at column missing (exception)', err.message);
+        } else {
+          console.error("❌ Cleanup EXCEPTION: room_members delete failed", {
+            error: err,
+            message: err?.message || err,
+            stack: err?.stack,
+            suggestion: "Table 'room_members' may not exist or 'created_at' column missing"
+          });
+        }
       }
 
       // Clean up stale pending invitations as well
@@ -1085,7 +1182,7 @@ export default function App() {
               <div className="card mb-4 position-sticky" style={{ top: '1rem', zIndex: 1 }}>
                 <div className="card-body">
                   <h5 className="card-title mb-3">🔍 Find & Connect Users</h5>
-                  <UserList users={allUsers.filter(u => u.name !== displayName)} onConnect={handleConnect} />
+                  <UserList users={allUsers} currentUserId={user?.id} connections={connections} onConnect={handleConnect} />
                 </div>
               </div>
 
@@ -1119,7 +1216,12 @@ export default function App() {
                     <h5 className="card-title mb-3">👥 Connected Users ({connections.length})</h5>
                     <ul className="list-group mb-3">
                       {connections.map(connUser => (
-                        <li key={connUser.id} className="list-group-item d-flex justify-content-between align-items-center">
+                        <li 
+                          key={connUser.id} 
+                          className={`list-group-item d-flex justify-content-between align-items-center ${selectedConnectedUser?.id === connUser.id ? 'active' : ''}`}
+                          style={{ cursor: 'pointer' }}
+                          onClick={() => setSelectedConnectedUser(selectedConnectedUser?.id === connUser.id ? null : connUser)}
+                        >
                           <span>{connUser.name}</span>
                           <span className="badge bg-success">Connected</span>
                         </li>
@@ -1144,13 +1246,13 @@ export default function App() {
                       </div>
                     )}
 
-                    {/* Direct sharing */}
-                    <div className="mt-3 border-top pt-3">
-                      <h6 className="mb-2">📁 Direct Share</h6>
-                      {connections.map(connUser => (
-                        <DirectShare key={connUser.id} user={connUser} onSend={handleDirectSend} />
-                      ))}
-                    </div>
+                    {/* Direct sharing - only show for selected user */}
+                    {selectedConnectedUser && (
+                      <div className="mt-3 border-top pt-3">
+                        <h6 className="mb-2">📁 Direct Share with {selectedConnectedUser.name}</h6>
+                        <DirectShare user={selectedConnectedUser} onSend={handleDirectSend} />
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
