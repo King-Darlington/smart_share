@@ -114,54 +114,128 @@ export default function App() {
         if (done) done();
       };
 
-  // Load persistent connections
+  // Load persistent connections (merge DB + localStorage so connections persist offline)
   useEffect(() => {
     const loadConnections = async () => {
-      if (!supabase || !user?.id) return;
-      const { data, error } = await supabase
-        .from('user_connections')
-        .select('id, user_a, user_b, status')
-        .or(`user_a.eq.${user.id},user_b.eq.${user.id}`)
-        .eq('status', 'accepted');
-      if (error) {
-        console.error('loadConnections error', error);
-      } else if (data) {
-        // Map back to user objects
-        const connectedIds = data.map(c => c.user_a === user.id ? c.user_b : c.user_a);
-        const { data: connectedUsers } = await supabase
-          .from('users')
-          .select('id, name')
-          .in('id', connectedIds);
-        setConnections(connectedUsers || []);
+      if (!user?.id) return;
+
+      const connKey = `share-room-connections-${user.id}`;
+      let dbUsers = [];
+
+      // Try to load from DB; if it fails, proceed with local storage only
+      try {
+        if (supabase) {
+          console.log('querying user_connections for user', user.id);
+          const { data, error } = await supabase
+            .from('user_connections')
+            .select('user_a, user_b')
+            .or(`user_a.eq.${user.id},user_b.eq.${user.id}`)
+            .eq('status', 'accepted');
+          if (!error && Array.isArray(data)) {
+            const connectedIds = data.map(c => (c.user_a === user.id ? c.user_b : c.user_a));
+            const { data: connectedUsers, error: userErr } = await supabase
+              .from('users')
+              .select('id, name')
+              .in('id', connectedIds);
+            if (userErr) {
+              console.error('Error fetching connected user records:', userErr);
+            }
+            if (Array.isArray(connectedUsers)) dbUsers = connectedUsers;
+          } else if (error) {
+            console.error('loadConnections DB error, will use local cache:', error);
+          }
+        } else {
+          console.warn('supabase instance not available when loading connections');
+        }
+      } catch (err) {
+        console.error('loadConnections exception, using local cache:', err);
       }
+
+      // Normalize local entries to {id, name} and include unsynced records
+      const localUsers = [];
+
+      // Merge DB-first, then local-only entries
+      const mergedById = new Map();
+      for (const u of dbUsers) mergedById.set(u.id, u);
+      for (const u of localUsers) if (!mergedById.has(u.id)) mergedById.set(u.id, u);
+
+      const merged = Array.from(mergedById.values());
+
+      // Persist merged back to localStorage so local cache stays in sync
+      try {
+        localStorage.setItem(connKey, JSON.stringify(merged));
+      } catch (err) {
+        console.warn('Could not persist merged connections to localStorage:', err?.message || err);
+      }
+
+      setConnections(merged || []);
     };
     loadConnections();
   }, [user?.id]);
 
-  // Connect to a user
+  // Connect to a user (persist to DB and localStorage)
   const handleConnect = async (targetUser) => {
-    if (!supabase || !user?.id) return;
-    
-    // Create bidirectional connection record (always store smaller ID first)
-    const [firstId, secondId] = user.id < targetUser.id 
-      ? [user.id, targetUser.id] 
-      : [targetUser.id, user.id];
-    
-    const { data, error } = await supabase.from('user_connections').insert({
-      user_a: firstId,
-      user_b: secondId,
-      status: 'accepted'
-    }).select();
-    
-    if (error) {
-      console.error('Connect error', error);
-      setStatusMessage(`Could not connect: ${error.message}`);
-    } else if (data) {
-      setConnections(prev => [...prev, targetUser]);
-      setStatusMessage(`Connected with ${targetUser.name}`);
+    if (!user || !user.id) {
+      console.error('handleConnect called but user or user.id is missing', user);
+      setStatusMessage('Cannot connect: no authenticated user');
+      return;
     }
-  };
+    if (!supabase) {
+      console.error('handleConnect called but supabase client is unavailable');
+      setStatusMessage('Cannot connect: backend not ready');
+      return;
+    }
+    setStatusMessage(`Connecting to ${targetUser.name}...`);
+    console.log('handleConnect invoked for', targetUser);
 
+    // Create bidirectional connection record (always store smaller ID first)
+    const [firstId, secondId] = user.id < targetUser.id ? [user.id, targetUser.id] : [targetUser.id, user.id];
+
+    const payload = { user_a: firstId, user_b: secondId, status: 'accepted' };
+    let dbOk = false;
+
+    // Attempt DB upsert (idempotent)
+    try {
+      if (supabase) {
+        const res = await supabase.from('user_connections').upsert(payload, { onConflict: ['user_a', 'user_b'] }).select();
+        if (res.error) {
+          console.error('user_connections upsert failed', res.error);
+          // record failure message
+          setStatusMessage(`Could not save connection to server: ${res.error.message}`);
+        } else {
+          dbOk = true;
+        }
+      }
+    } catch (err) {
+      console.error('user_connections upsert exception (will still cache locally):', err);
+      setStatusMessage(`Connection saved locally but server error: ${err?.message || err}`);
+    }
+
+    // Always update localStorage so connections survive reloads/logouts
+    const connKey = `share-room-connections-${user.id}`;
+    try {
+      const raw = localStorage.getItem(connKey);
+      const list = raw ? JSON.parse(raw) : [];
+      const existing = list.find(c => c.id === targetUser.id);
+      if (!existing) {
+        list.push({ id: targetUser.id, name: targetUser.name, synced: dbOk });
+      } else if (dbOk && !existing.synced) {
+        existing.synced = true;
+      }
+      localStorage.setItem(connKey, JSON.stringify(list));
+    } catch (err) {
+      console.warn('Could not write connections to localStorage:', err?.message || err);
+    }
+
+    // Update in-memory state (avoid duplicates)
+    setConnections(prev => {
+      if (prev.find(p => p.id === targetUser.id)) return prev;
+      return [...prev, targetUser];
+    });
+
+    setStatusMessage(`Connected with ${targetUser.name}` + (dbOk ? '' : ' (cached locally)'));
+    console.log('connection state now', connections);
+  };
   const selectedRoom = useMemo(() => {
     return rooms.find((room) => room.id === selectedRoomId) || null;
   }, [rooms, selectedRoomId]);
@@ -404,11 +478,11 @@ export default function App() {
           .from("room_members")
           .delete()
           .lt("created_at", staleDate.toISOString());
-        if (memberError && !memberError.message?.includes("does not exist")) {
-          console.warn("Cleanup warning for room_members:", memberError?.message || memberError);
+        if (memberError) {
+          console.error("Cleanup error deleting room_members:", memberError);
         }
       } catch (err) {
-        // silently ignore cleanup exceptions
+        console.error("Cleanup exception while deleting room_members:", err);
       }
 
       // Clean up stale pending invitations as well
